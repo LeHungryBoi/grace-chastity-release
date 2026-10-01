@@ -1,0 +1,6 @@
+{
+  "name": "APEX: Roguelike Chastity & Release Board",
+  "description": "Hotseat node-graph roguelike board game with compass navigation, modifier rolls, dynamic chaser, and Wifey/Hubby mode controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
