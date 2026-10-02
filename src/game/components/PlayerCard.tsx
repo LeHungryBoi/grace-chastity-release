@@ -18,12 +18,14 @@ interface PlayerCardProps {
   player: Player;
   isActive: boolean;
   onTriggerSeButton: (playerId: string) => void;
+  onInvokeGrace?: (playerId: string) => void;
 }
 
 export const PlayerCard: React.FC<PlayerCardProps> = ({
   player,
   isActive,
   onTriggerSeButton,
+  onInvokeGrace,
 }) => {
   const canPressSe = player.hasReachedApex && player.apexChallengePassed && !player.hasPressedSe;
 
@@ -85,6 +87,24 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
                 : player.hasReachedApex
                 ? 'AT APEX SUMMIT'
                 : `Tile: ${player.currentNodeId.replace('node_', 'T')}`}
+            </div>
+            {/* AP & Grace Indicators */}
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-1 ${
+                player.actionPoints > 0 
+                  ? 'bg-amber-950/80 text-amber-300 border border-amber-700/60' 
+                  : 'bg-slate-950 text-slate-600 border border-slate-800'
+              }`}>
+                <span>⚡ {player.actionPoints ?? 0}/{player.maxActionPoints ?? 3} AP</span>
+              </span>
+
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-1 ${
+                player.graceTokens > 0
+                  ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-700/60'
+                  : 'bg-slate-950 text-slate-600 border border-slate-800'
+              }`}>
+                <span>✨ Grace: x{player.graceTokens ?? 0}</span>
+              </span>
             </div>
           </div>
         </div>
@@ -176,6 +196,17 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
               </span>
             ))}
           </div>
+        )}
+
+        {isActive && onInvokeGrace && player.graceTokens > 0 && !player.hasPressedSe && (
+          <button
+            onClick={() => onInvokeGrace(player.id)}
+            className="w-full mt-1 py-1.5 px-2 bg-gradient-to-r from-amber-950/80 to-emerald-950/80 hover:from-amber-900 hover:to-emerald-900 border border-amber-500/60 rounded-lg text-[11px] font-bold text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer shadow transition-all active:scale-[0.98]"
+            title="Beg for Mercy / Extra AP from the Grace Challenge Pool"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+            <span>Invoke Grace ({player.graceTokens} Tokens)</span>
+          </button>
         )}
       </div>
     </div>

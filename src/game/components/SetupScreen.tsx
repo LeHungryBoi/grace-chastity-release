@@ -70,6 +70,11 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onStartGame }) => {
         avatarId: avatar.id,
         color: avatar.color,
         currentNodeId: 'node_0_0',
+        actionPoints: 3, // 3 AP per turn/round
+        maxActionPoints: 3,
+        graceTokens: 2, // 2 consumable Grace tokens
+        graceSubmittedCount: 0,
+        graceForfeitedCount: 0,
         statusEffects: [],
         relics: [],
         tasksCompleted: 0,

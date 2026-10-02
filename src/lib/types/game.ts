@@ -61,14 +61,57 @@ export interface Relic {
   icon: string;
 }
 
+export type BroadcastEventType = 
+  | 'ON_MOVE' 
+  | 'ON_REST' 
+  | 'ON_TURN_END' 
+  | 'ON_ROUND_END';
+
+export interface GearHookEffect {
+  listenTo: BroadcastEventType;
+  overrideEndsTurnImmediately?: boolean;
+  overrideEndsRoundImmediately?: boolean; // backwards-compatible alias
+  bonusAP?: number;
+  description: string;
+}
+
+export interface GearItem {
+  id: string;
+  name: string;
+  slot: 'accessory' | 'artifact' | 'relic';
+  rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary';
+  icon: string;
+  description?: string;
+  flavorText?: string;
+  hook: GearHookEffect;
+}
+
+export interface BroadcastContext {
+  type: BroadcastEventType;
+  participantId: string;
+  participantName: string;
+  targetNodeId?: string;
+  currentAP: number;
+  endsTurnImmediately?: boolean;
+  endsRoundImmediately?: boolean; // backwards-compatible alias
+  apReward?: number;
+  metadata?: Record<string, any>;
+}
+
 export interface Player {
   id: string;
   name: string;
   avatarId: string;
   color: string;
   currentNodeId: string;
+  actionPoints: number; // Current AP available (starts at 3, managed via actions/rest)
+  maxActionPoints: number; // Max standard AP baseline (3)
+  graceTokens: number; // Consumable Grace resource
+  graceSubmittedCount: number;
+  graceForfeitedCount: number;
   statusEffects: StatusEffect[];
   relics: Relic[];
+  gear?: GearItem[];
   tasksCompleted: number;
   penaltiesEndured: number;
   ruinedCount: number;
@@ -76,7 +119,37 @@ export interface Player {
   hasReachedApex: boolean;
   apexChallengePassed: boolean;
   hasPressedSe: boolean; // Triggered "色"
+  isNPC?: boolean;
   finishedTime?: string;
+}
+
+export interface ChaserMonolith {
+  id: string;
+  name: string;
+  currentNodeId: string;
+  isAggro: boolean;
+  targetPlayerId?: string | null;
+  distanceToTarget?: number;
+}
+
+// TurnEndEvent: Individual Participant's Turn Concludes
+export interface TurnEndEvent {
+  participantId: string;
+  participantName: string;
+  actionPointsRemaining: number;
+  restTaken: boolean;
+  turnNumber: number;
+  roundNumber: number;
+  timestamp: number;
+}
+
+// RoundEndEvent: Full Table Cycle Concludes (All players took their turn)
+export interface RoundEndEvent {
+  roundNumber: number;
+  totalParticipants: number;
+  activePlayers: Player[];
+  chasers: ChaserMonolith[];
+  timestamp: number;
 }
 
 export interface BaseAction {

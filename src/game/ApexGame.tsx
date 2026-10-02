@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Player, 
   DMSettings, 
   GamePhase, 
   ActiveTask, 
-  BoardNode 
+  BoardNode,
+  ChaserMonolith,
+  RoundEndEvent,
+  TurnEndEvent
 } from '../lib/types/game';
 import { generateBoardGraph, getShortestPath } from '../lib/map/graphGenerator';
 import { 
@@ -23,12 +26,16 @@ import { TaskModal } from './components/TaskModal';
 import { DMSettingsModal } from './components/DMSettingsModal';
 import { VictoryModal } from './components/VictoryModal';
 import { SetupScreen } from './components/SetupScreen';
+import { GraceModal } from './components/GraceModal';
+import { GraceChallenge, getRandomGraceChallenge } from '../lib/config/gracePoolConfig';
 
 export const ApexGame: React.FC = () => {
   const [hasStarted, setHasStarted] = useState<boolean>(false);
   const [players, setPlayers] = useState<Player[]>([]);
   const [activePlayerIndex, setActivePlayerIndex] = useState<number>(0);
   const [roundNumber, setRoundNumber] = useState<number>(1);
+  const [turnNumber, setTurnNumber] = useState<number>(1);
+  const [hasRestedThisRound, setHasRestedThisRound] = useState<boolean>(false);
   const [gamePhase, setGamePhase] = useState<GamePhase>('DIRECTION_SELECTION');
   const [isWifeyMode, setIsWifeyMode] = useState<boolean>(true);
   const [showDMSettings, setShowDMSettings] = useState<boolean>(false);
@@ -37,10 +44,10 @@ export const ApexGame: React.FC = () => {
   const [boardData, setBoardData] = useState(() => generateBoardGraph());
   const [selectedTargetNodeId, setSelectedTargetNodeId] = useState<string | null>(null);
   const [activeTask, setActiveTask] = useState<ActiveTask | null>(null);
+  const [activeGraceChallenge, setActiveGraceChallenge] = useState<GraceChallenge | null>(null);
 
-  // Chaser State
-  const [chaserNodeId, setChaserNodeId] = useState<string | null>(null);
-  const [chaserSpawned, setChaserSpawned] = useState<boolean>(false);
+  // Multiple Chaser Monoliths State
+  const [monoliths, setMonoliths] = useState<ChaserMonolith[]>([]);
 
   // Victory State
   const [victoryPlayer, setVictoryPlayer] = useState<Player | null>(null);
@@ -80,24 +87,99 @@ export const ApexGame: React.FC = () => {
     }
   }, [availableNextNodes, selectedTargetNodeId]);
 
+  // Spawn random Chaser Monoliths on game setup
+  const spawnInitialMonoliths = (board: ReturnType<typeof generateBoardGraph>) => {
+    const allNodesList = Object.values(board.nodes);
+    const eligibleNodes = allNodesList.filter(
+      n => n.id !== board.startNodeId && n.id !== board.apexNodeId
+    );
+    const shuffled = [...eligibleNodes].sort(() => Math.random() - 0.5);
+    const chosen = shuffled.slice(0, Math.min(3, shuffled.length));
+
+    return chosen.map((n, i) => ({
+      id: `monolith_${i + 1}`,
+      name: `Chaser Monolith ${['I', 'II', 'III'][i] || i + 1}`,
+      currentNodeId: n.id,
+      isAggro: false,
+      targetPlayerId: null,
+      distanceToTarget: 99,
+    }));
+  };
+
   const handleStartGame = (initialPlayers: Player[], initialSettings: DMSettings) => {
     const newBoard = generateBoardGraph(9);
     setBoardData(newBoard);
 
     const placedPlayers = initialPlayers.map(p => ({
       ...p,
+      actionPoints: 3, // Start with 3 AP
+      maxActionPoints: 3,
+      graceTokens: p.graceTokens ?? 2,
+      graceSubmittedCount: p.graceSubmittedCount ?? 0,
+      graceForfeitedCount: p.graceForfeitedCount ?? 0,
       currentNodeId: newBoard.startNodeId,
     }));
 
+    const initialMonoliths = spawnInitialMonoliths(newBoard);
+
     setPlayers(placedPlayers);
+    setMonoliths(initialMonoliths);
     setSettings(initialSettings);
     setActivePlayerIndex(0);
     setRoundNumber(1);
-    setChaserSpawned(false);
-    setChaserNodeId(null);
+    setTurnNumber(1);
     setGamePhase('DIRECTION_SELECTION');
     setHasStarted(true);
   };
+
+  // Recalculate Monolith Aggro state (within 3 nodes)
+  useEffect(() => {
+    if (monoliths.length === 0 || players.length === 0) return;
+
+    let newlyAggroed = false;
+    const updated = monoliths.map(monolith => {
+      let closestDistance = Infinity;
+      let closestPlayer: Player | null = null;
+
+      players.forEach(p => {
+        if (!p.hasPressedSe) {
+          const path = getShortestPath(boardData.nodes, monolith.currentNodeId, p.currentNodeId);
+          const dist = path.length - 1;
+          if (dist < closestDistance) {
+            closestDistance = dist;
+            closestPlayer = p;
+          }
+        }
+      });
+
+      const isWithin3Nodes = closestDistance <= 3;
+      if (isWithin3Nodes && !monolith.isAggro) {
+        newlyAggroed = true;
+      }
+
+      return {
+        ...monolith,
+        isAggro: isWithin3Nodes,
+        targetPlayerId: isWithin3Nodes && closestPlayer ? (closestPlayer as Player).id : null,
+        distanceToTarget: closestDistance,
+      };
+    });
+
+    setMonoliths(updated);
+
+    if (newlyAggroed) {
+      sound.playHazardWarning();
+    }
+  }, [players, boardData.nodes]);
+
+  // Lifecycle callback hooks
+  const onRoundEnd = useCallback((event: RoundEndEvent) => {
+    // Round end callback hook for game systems / logs
+  }, []);
+
+  const onTurnEnd = useCallback((event: TurnEndEvent) => {
+    // Turn end callback hook for game systems / logs
+  }, []);
 
   const handleRollComplete = (rollValue: number) => {
     if (!activePlayer || !currentNode) return;
@@ -122,11 +204,13 @@ export const ApexGame: React.FC = () => {
 
     const reachedApex = destNode.type === 'APEX';
 
+    // Deduct 1 AP for rolling & traversing
     setPlayers(prev =>
       prev.map(p => {
         if (p.id === activePlayer.id) {
           return {
             ...p,
+            actionPoints: Math.max(0, p.actionPoints - 1),
             currentNodeId: destNode.id,
             totalRolls: p.totalRolls + 1,
             hasReachedApex: p.hasReachedApex || reachedApex,
@@ -314,96 +398,133 @@ export const ApexGame: React.FC = () => {
     }
 
     setActiveTask(null);
-    advanceTurn();
+
+    // If player still has AP (> 0) let them choose their next action/move
+    // Otherwise conclude their round
+    if (activePlayer.actionPoints > 0 && !activePlayer.hasPressedSe) {
+      setGamePhase('DIRECTION_SELECTION');
+    } else {
+      advanceRound(false);
+    }
   };
 
-  const advanceTurn = () => {
+  // Special condition stub: by default resting immediately ends the round.
+  const checkSpecialRestCondition = (
+    _player: Player
+  ): { endsRoundImmediately: boolean; conditionName?: string } => {
+    // STUB: Special conditions not yet active - default is immediate round end
+    return { endsRoundImmediately: true };
+  };
+
+  // REST ACTION: Player skips actions for their round and gains +2 AP
+  // Constraint: Player can only rest ONE time per round.
+  // Resting immediately ends the round unless a special condition applies (stubbed).
+  const handleRest = () => {
+    if (!activePlayer || gamePhase === 'RESOLVING_TASK' || hasRestedThisRound) return;
+    sound.playTaskSuccess();
+    setHasRestedThisRound(true);
+
+    const newAP = activePlayer.actionPoints + 2;
+    const updatedPlayer = {
+      ...activePlayer,
+      actionPoints: newAP,
+    };
+
+    setPlayers(prev =>
+      prev.map(p => (p.id === activePlayer.id ? updatedPlayer : p))
+    );
+
+    const specialCondition = checkSpecialRestCondition(updatedPlayer);
+    if (specialCondition.endsRoundImmediately) {
+      advanceRound(true);
+    }
+  };
+
+  // Advance participant's individual turn
+  const advanceRound = (restTaken: boolean) => {
+    if (!activePlayer) return;
+
+    // Reset turn-specific flags
+    setHasRestedThisRound(false);
+
+    onTurnEnd({
+      participantId: activePlayer.id,
+      participantName: activePlayer.name,
+      actionPointsRemaining: activePlayer.actionPoints + (restTaken ? 2 : 0),
+      restTaken,
+      roundNumber,
+      turnNumber,
+      timestamp: Date.now(),
+    });
+
     const nextPlayerIndex = (activePlayerIndex + 1) % players.length;
     setActivePlayerIndex(nextPlayerIndex);
 
+    // If full cycle completed across all players -> advance Round!
     if (nextPlayerIndex === 0) {
       const nextRound = roundNumber + 1;
+      setTurnNumber(turnNumber + 1);
       setRoundNumber(nextRound);
-      runChaserCycle(nextRound);
-    } else {
-      setGamePhase('DIRECTION_SELECTION');
-    }
-  };
 
-  const runChaserCycle = (round: number) => {
-    let isSpawned = chaserSpawned;
-    let chaserPos = chaserNodeId;
-
-    if (round >= settings.chaserSpawnRound && !isSpawned) {
-      isSpawned = true;
-      chaserPos = boardData.startNodeId;
-      setChaserSpawned(true);
-      setChaserNodeId(chaserPos);
-      sound.playHazardWarning();
-    }
-
-    if (isSpawned && chaserPos && settings.chaserSpeed > 0) {
-      let closestPlayer: Player | null = null;
-      let shortestDistance = Infinity;
-      let bestPath: string[] = [];
-
-      players.forEach(p => {
-        if (!p.hasPressedSe) {
-          const path = getShortestPath(boardData.nodes, chaserPos!, p.currentNodeId);
-          if (path.length < shortestDistance) {
-            shortestDistance = path.length;
-            closestPlayer = p;
-            bestPath = path;
-          }
-        }
+      onRoundEnd({
+        roundNumber,
+        totalParticipants: players.length,
+        activePlayers: players,
+        chasers: monoliths,
+        timestamp: Date.now(),
       });
-
-      if (bestPath.length > 1) {
-        sound.playChaserAdvance();
-        const stepsToTake = Math.min(settings.chaserSpeed, bestPath.length - 1);
-        const newChaserPos = bestPath[stepsToTake];
-        setChaserNodeId(newChaserPos);
-
-        const caughtPlayers = players.filter(
-          p => p.currentNodeId === newChaserPos && !p.hasPressedSe
-        );
-
-        if (caughtPlayers.length > 0) {
-          sound.playHazardWarning();
-          caughtPlayers.forEach(caught => {
-            const hasDecoy = caught.relics.some(r => r.id === 'CHASER_DECOY');
-            if (hasDecoy) {
-              setPlayers(prev =>
-                prev.map(p => {
-                  if (p.id === caught.id) {
-                    const idx = p.relics.findIndex(r => r.id === 'CHASER_DECOY');
-                    const nextR = [...p.relics];
-                    nextR.splice(idx, 1);
-                    return { ...p, relics: nextR };
-                  }
-                  return p;
-                })
-              );
-            } else {
-              setPlayers(prev =>
-                prev.map(p => {
-                  if (p.id === caught.id) {
-                    return {
-                      ...p,
-                      penaltiesEndured: p.penaltiesEndured + 1,
-                      relics: [],
-                    };
-                  }
-                  return p;
-                })
-              );
-            }
-          });
-        }
-      }
     }
 
     setGamePhase('DIRECTION_SELECTION');
+  };
+
+  const handleInvokeGrace = (playerId?: string) => {
+    if (!activePlayer || activePlayer.graceTokens <= 0) return;
+    sound.playCompassClick();
+    const challenge = getRandomGraceChallenge();
+    setActiveGraceChallenge(challenge);
+  };
+
+  const handleConfirmGraceSubmit = (challenge: GraceChallenge) => {
+    if (!activePlayer) return;
+    setPlayers(prev =>
+      prev.map(p => {
+        if (p.id === activePlayer.id) {
+          return {
+            ...p,
+            graceTokens: Math.max(0, p.graceTokens - 1),
+            graceSubmittedCount: p.graceSubmittedCount + 1,
+            actionPoints: p.actionPoints + challenge.apReward,
+          };
+        }
+        return p;
+      })
+    );
+    setActiveGraceChallenge(null);
+    setGamePhase('DIRECTION_SELECTION');
+  };
+
+  const handleForfeitGrace = () => {
+    if (!activePlayer) return;
+    setPlayers(prev =>
+      prev.map(p => {
+        if (p.id === activePlayer.id) {
+          return {
+            ...p,
+            graceTokens: Math.max(0, p.graceTokens - 1),
+            graceForfeitedCount: p.graceForfeitedCount + 1,
+          };
+        }
+        return p;
+      })
+    );
+    setActiveGraceChallenge(null);
+  };
+
+  const handleEndTurn = () => {
+    if (gamePhase === 'RESOLVING_TASK') return;
+    sound.playCompassClick();
+    advanceRound(false);
   };
 
   const handleTriggerSeButton = (playerId: string) => {
@@ -436,8 +557,8 @@ export const ApexGame: React.FC = () => {
 
   const handleManualSpawnChaser = () => {
     sound.playHazardWarning();
-    setChaserSpawned(true);
-    setChaserNodeId(boardData.startNodeId);
+    const newMonoliths = spawnInitialMonoliths(boardData);
+    setMonoliths(newMonoliths);
   };
 
   const allCompleted = players.length > 0 && players.every(p => p.hasPressedSe);
@@ -449,7 +570,7 @@ export const ApexGame: React.FC = () => {
   return (
     <div className="h-screen max-h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col select-none font-mono">
       <Header
-        currentRound={roundNumber}
+        currentRound={turnNumber}
         activePlayerName={activePlayer?.name || 'Player'}
         isWifeyMode={isWifeyMode}
         onToggleWifeyMode={() => {
@@ -466,8 +587,7 @@ export const ApexGame: React.FC = () => {
             nodes={boardData.nodes}
             players={players}
             activePlayerId={activePlayer?.id || ''}
-            chaserNodeId={chaserNodeId}
-            chaserSpawned={chaserSpawned}
+            monoliths={monoliths}
             selectedTargetNodeId={selectedTargetNodeId}
             onNodeClick={nodeId => {
               if (availableNextNodes.some(n => n.id === nodeId)) {
@@ -495,6 +615,13 @@ export const ApexGame: React.FC = () => {
             disabled={gamePhase === 'RESOLVING_TASK' || activePlayer?.hasPressedSe}
             relics={activePlayer?.relics || []}
             onUseGoldenCompass={handleUseGoldenCompass}
+            actionPoints={activePlayer?.actionPoints ?? 0}
+            maxActionPoints={activePlayer?.maxActionPoints ?? 3}
+            graceTokens={activePlayer?.graceTokens ?? 0}
+            onInvokeGrace={handleInvokeGrace}
+            onEndTurn={handleEndTurn}
+            onRest={handleRest}
+            hasRestedThisRound={hasRestedThisRound}
           />
         </div>
 
@@ -505,10 +632,20 @@ export const ApexGame: React.FC = () => {
               player={p}
               isActive={idx === activePlayerIndex}
               onTriggerSeButton={handleTriggerSeButton}
+              onInvokeGrace={handleInvokeGrace}
             />
           ))}
         </div>
       </main>
+
+      {activeGraceChallenge && activePlayer && (
+        <GraceModal
+          challenge={activeGraceChallenge}
+          player={activePlayer}
+          onConfirmSubmit={handleConfirmGraceSubmit}
+          onForfeit={handleForfeitGrace}
+        />
+      )}
 
       {activeTask && activePlayer && (
         <TaskModal

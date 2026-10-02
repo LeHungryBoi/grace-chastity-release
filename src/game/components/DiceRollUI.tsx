@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Dices, Sparkles, AlertCircle } from 'lucide-react';
+import { Dices, Sparkles, AlertCircle, Zap, ArrowRightCircle } from 'lucide-react';
 import { sound } from '../../lib/audio/soundEngine';
 import { MODIFIER_MAP } from '../../lib/config/actionsConfig';
 import { Relic } from '../../lib/types/game';
@@ -10,6 +10,13 @@ interface DiceRollUIProps {
   disabled?: boolean;
   relics: Relic[];
   onUseGoldenCompass?: (chosenRoll: number) => void;
+  actionPoints?: number;
+  maxActionPoints?: number;
+  graceTokens?: number;
+  onInvokeGrace?: () => void;
+  onEndTurn?: () => void;
+  onRest?: () => void;
+  hasRestedThisRound?: boolean;
 }
 
 export const DiceRollUI: React.FC<DiceRollUIProps> = ({
@@ -18,15 +25,24 @@ export const DiceRollUI: React.FC<DiceRollUIProps> = ({
   disabled = false,
   relics,
   onUseGoldenCompass,
+  actionPoints = 3,
+  maxActionPoints = 3,
+  graceTokens = 0,
+  onInvokeGrace,
+  onEndTurn,
+  onRest,
+  hasRestedThisRound = false,
 }) => {
   const [isRolling, setIsRolling] = useState(false);
   const [displayValue, setDisplayValue] = useState<number | null>(null);
   const [showGoldenCompassModal, setShowGoldenCompassModal] = useState(false);
 
   const hasGoldenCompass = relics.some(r => r.id === 'GOLDEN_COMPASS');
+  const isOutOfAP = actionPoints <= 0;
+  const isRollDisabled = disabled || isRolling || isOutOfAP;
 
   const executeRoll = () => {
-    if (disabled || isRolling) return;
+    if (isRollDisabled) return;
     setIsRolling(true);
     sound.playRollRattle();
 
@@ -67,9 +83,23 @@ export const DiceRollUI: React.FC<DiceRollUIProps> = ({
           <Dices className="w-4 h-4 text-rose-500" />
           <span className="font-semibold text-slate-200">TRAVERSAL & MODIFIER ROLL</span>
         </div>
-        <span className="text-[11px] font-mono text-slate-500">
-          RANGE: [-{volatilityRange}, +{volatilityRange}]
-        </span>
+
+        {/* AP & Grace Status Header */}
+        <div className="flex items-center gap-2 text-xs font-mono">
+          <span className={`px-2 py-0.5 rounded font-bold flex items-center gap-1 ${
+            actionPoints > 0 
+              ? 'bg-amber-950 text-amber-300 border border-amber-700/80'
+              : 'bg-rose-950 text-rose-300 border border-rose-700/80 animate-pulse'
+          }`}>
+            <Zap className="w-3.5 h-3.5 fill-current" />
+            <span>{actionPoints} / {maxActionPoints} AP</span>
+          </span>
+
+          <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/80 font-bold flex items-center gap-1">
+            <Sparkles className="w-3 h-3" />
+            <span>Grace: x{graceTokens}</span>
+          </span>
+        </div>
       </div>
 
       <div className="flex items-center justify-center py-2">
@@ -128,23 +158,90 @@ export const DiceRollUI: React.FC<DiceRollUIProps> = ({
       ) : (
         <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-2.5 text-xs font-mono text-slate-500 text-center flex items-center justify-center gap-1.5">
           <AlertCircle className="w-3.5 h-3.5 text-slate-600" />
-          <span>Distance = |Roll| · Signed Value = Task Modifier</span>
+          <span>Roll Cost: 1 AP · Traversal Distance = |Roll|</span>
         </div>
       )}
 
       <div className="flex flex-col gap-2">
+        {/* Main Trigger Roll Button */}
         <button
           onClick={executeRoll}
-          disabled={disabled || isRolling}
+          disabled={isRollDisabled}
           className={`w-full py-3 px-4 rounded-lg font-mono font-bold text-sm tracking-wide transition-all shadow-md flex items-center justify-center gap-2 ${
-            disabled || isRolling
+            isRollDisabled
               ? 'bg-slate-800/50 border border-slate-700/50 text-slate-500 cursor-not-allowed'
               : 'bg-rose-900/80 hover:bg-rose-800 border border-rose-600/70 text-rose-100 hover:text-white cursor-pointer active:scale-[0.98]'
           }`}
         >
           <Dices className={`w-4 h-4 ${isRolling ? 'animate-spin' : ''}`} />
-          <span>{isRolling ? 'CALCULATING FATE...' : 'TRIGGER ROLL'}</span>
+          <span>
+            {isRolling
+              ? 'CALCULATING FATE...'
+              : isOutOfAP
+              ? 'OUT OF AP (INVOKE GRACE OR PASS)'
+              : 'TRIGGER ROLL (COST: 1 AP)'}
+          </span>
         </button>
+
+        {/* Secondary Action Row: Rest (+2 AP), Grace & End Round */}
+        <div className="grid grid-cols-3 gap-1.5">
+          {onRest && (
+            <button
+              onClick={onRest}
+              disabled={disabled || isRolling || hasRestedThisRound}
+              className={`py-2 px-1.5 rounded-lg font-mono text-xs font-bold border flex items-center justify-center gap-1 transition-all shadow ${
+                hasRestedThisRound
+                  ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
+                  : isOutOfAP
+                  ? 'bg-emerald-700 hover:bg-emerald-600 border-emerald-400 text-white animate-pulse cursor-pointer'
+                  : 'bg-emerald-950/70 border-emerald-600/70 text-emerald-200 hover:bg-emerald-900/80 cursor-pointer'
+              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={
+                hasRestedThisRound
+                  ? 'Already rested this round (Limit: 1 rest per round)'
+                  : 'Rest: Take no move/action this round to regain +2 AP (Ends round immediately)'
+              }
+            >
+              <span>{hasRestedThisRound ? '☕ Rested' : '☕ Rest (+2)'}</span>
+            </button>
+          )}
+
+          {onInvokeGrace && graceTokens > 0 ? (
+            <button
+              onClick={onInvokeGrace}
+              disabled={disabled}
+              className={`py-2 px-1.5 rounded-lg font-mono text-xs font-bold border flex items-center justify-center gap-1 transition-all shadow ${
+                isOutOfAP
+                  ? 'bg-gradient-to-r from-amber-600 to-emerald-600 text-white border-amber-300 animate-pulse shadow-amber-950 cursor-pointer'
+                  : 'bg-amber-950/40 border-amber-600/70 text-amber-200 hover:bg-amber-900/60 cursor-pointer'
+              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title="Draw a challenge from the Grace Pool to claim extra AP"
+            >
+              <Sparkles className="w-3 h-3 text-amber-300" />
+              <span>Grace ({graceTokens})</span>
+            </button>
+          ) : (
+            <button
+              disabled
+              className="py-2 px-1.5 rounded-lg font-mono text-xs bg-slate-950/60 border border-slate-800 text-slate-600 flex items-center justify-center gap-1 cursor-not-allowed"
+            >
+              <Sparkles className="w-3 h-3 text-slate-700" />
+              <span>0 Grace</span>
+            </button>
+          )}
+
+          {onEndTurn && (
+            <button
+              onClick={onEndTurn}
+              disabled={disabled || isRolling}
+              className="py-2 px-1.5 rounded-lg font-mono text-xs text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center gap-1 transition-colors cursor-pointer"
+              title="End your round and pass to the next player"
+            >
+              <ArrowRightCircle className="w-3.5 h-3.5 text-slate-400" />
+              <span>End Round</span>
+            </button>
+          )}
+        </div>
 
         {hasGoldenCompass && !disabled && (
           <button
@@ -198,3 +295,4 @@ export const DiceRollUI: React.FC<DiceRollUIProps> = ({
     </div>
   );
 };
+

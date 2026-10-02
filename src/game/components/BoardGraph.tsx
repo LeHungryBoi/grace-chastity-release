@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { BoardNode, Player, TileType, RoomType } from '../../lib/types/game';
+import { BoardNode, Player, TileType, RoomType, ChaserMonolith } from '../../lib/types/game';
 import { 
   Shield, 
   Swords, 
@@ -11,15 +11,17 @@ import {
   ChevronRight,
   Eye,
   Octagon,
-  CircleDot
+  CircleDot,
+  Radio
 } from 'lucide-react';
 
 interface BoardGraphProps {
   nodes: Record<string, BoardNode>;
   players: Player[];
   activePlayerId: string;
-  chaserNodeId: string | null;
-  chaserSpawned: boolean;
+  chaserNodeId?: string | null;
+  chaserSpawned?: boolean;
+  monoliths?: ChaserMonolith[];
   selectedTargetNodeId: string | null;
   onNodeClick?: (nodeId: string) => void;
 }
@@ -30,6 +32,7 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
   activePlayerId,
   chaserNodeId,
   chaserSpawned,
+  monoliths = [],
   selectedTargetNodeId,
   onNodeClick,
 }) => {
@@ -50,6 +53,23 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
   const allNodes = Object.values(nodes);
   const maxX = Math.max(...allNodes.map(n => n.x), 900) + 120;
   const maxY = Math.max(...allNodes.map(n => n.y), 500) + 120;
+
+  // Extract all unique undirected corridors to ensure uniform bright paths across the board
+  const uniqueCorridors = React.useMemo(() => {
+    const corridorMap = new Map<string, { from: BoardNode; to: BoardNode; id: string }>();
+    allNodes.forEach(node => {
+      node.nextNodes.forEach(nextId => {
+        const target = nodes[nextId];
+        if (target) {
+          const key = [node.id, nextId].sort().join('__');
+          if (!corridorMap.has(key)) {
+            corridorMap.set(key, { from: node, to: target, id: key });
+          }
+        }
+      });
+    });
+    return Array.from(corridorMap.values());
+  }, [allNodes, nodes]);
 
   const renderTileIcon = (type: TileType, roomType?: RoomType) => {
     switch (type) {
@@ -81,6 +101,8 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
     return points.join(' ');
   };
 
+  const hasAggroMonoliths = monoliths.some(m => m.isAggro) || chaserSpawned;
+
   return (
     <div
       ref={containerRef}
@@ -92,12 +114,12 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
       }}
     >
       <div className="sticky top-3 left-4 right-4 flex items-center justify-between text-xs font-mono text-slate-400 z-10 pointer-events-none mb-2 px-2">
-        <div className="flex items-center gap-4 bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800/80 backdrop-blur-sm shadow">
-          <span className="flex items-center gap-1.5 text-amber-300">
-            <Octagon className="w-3.5 h-3.5 text-amber-400" /> Octagon Room (8-Way)
+        <div className="flex items-center gap-3 bg-slate-950/90 px-3 py-1.5 rounded-lg border border-slate-800/80 backdrop-blur-sm shadow">
+          <span className="flex items-center gap-1.5 text-amber-300 font-semibold">
+            <Octagon className="w-3.5 h-3.5 text-amber-400" /> Octagon Room (Scripted)
           </span>
           <span className="flex items-center gap-1.5 text-sky-400">
-            <CircleDot className="w-3.5 h-3.5" /> Rest Waypoint
+            <CircleDot className="w-3.5 h-3.5" /> Waypoint Dot (Transit)
           </span>
           <span className="flex items-center gap-1.5 text-rose-400">
             <Skull className="w-3.5 h-3.5" /> Ruined Brink
@@ -107,10 +129,10 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
           </span>
         </div>
 
-        {chaserSpawned && (
-          <div className="flex items-center gap-2 bg-rose-950/80 border border-rose-700/80 text-rose-300 px-3 py-1.5 rounded-lg backdrop-blur-sm font-semibold animate-pulse shadow">
+        {hasAggroMonoliths && (
+          <div className="flex items-center gap-2 bg-rose-950/90 border border-rose-700/80 text-rose-300 px-3 py-1.5 rounded-lg backdrop-blur-sm font-semibold animate-pulse shadow">
             <Eye className="w-3.5 h-3.5" />
-            <span>OVERSEER CHASER ACTIVE</span>
+            <span>CHASER MONOLITH AGGRO (&le; 3 NODES)</span>
           </div>
         )}
       </div>
@@ -121,53 +143,53 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
         className="overflow-visible block p-4"
       >
         <defs>
-          <linearGradient id="pathGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#94a3b8" stopOpacity="0.85" />
-            <stop offset="50%" stopColor="#cbd5e1" stopOpacity="0.95" />
-            <stop offset="100%" stopColor="#94a3b8" stopOpacity="0.85" />
-          </linearGradient>
-          <linearGradient id="activePathGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#f59e0b" stopOpacity="1" />
-            <stop offset="50%" stopColor="#fde047" stopOpacity="1" />
-            <stop offset="100%" stopColor="#f59e0b" stopOpacity="1" />
-          </linearGradient>
+          <filter id="monolithGlowBoard" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
 
-        {/* 1. Connecting Corridor Edges */}
-        {allNodes.map(node =>
-          node.nextNodes.map(nextId => {
-            const targetNode = nodes[nextId];
-            if (!targetNode) return null;
-            if (node.id > nextId) return null; // Avoid duplicate lines
+        {/* 1. Connecting Corridor Edges - 100% Uniform, Bright, Crisp Pathways */}
+        {uniqueCorridors.map(({ from, to, id }) => (
+          <line
+            key={`corridor-${id}`}
+            x1={from.x}
+            y1={from.y}
+            x2={to.x}
+            y2={to.y}
+            stroke="#e2e8f0"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            opacity="0.92"
+          />
+        ))}
 
-            const isPlayerEdge =
-              (activePlayer && node.id === activePlayer.currentNodeId && nextId === selectedTargetNodeId) ||
-              (activePlayer && nextId === activePlayer.currentNodeId && node.id === selectedTargetNodeId);
+        {/* Aggro Tether Lines between Chasers and Target Players */}
+        {monoliths.map(m => {
+          if (!m.isAggro || !m.targetPlayerId) return null;
+          const mNode = nodes[m.currentNodeId];
+          const targetP = players.find(p => p.id === m.targetPlayerId);
+          const pNode = targetP ? nodes[targetP.currentNodeId] : null;
+          if (!mNode || !pNode) return null;
 
-            return (
-              <g key={`edge-${node.id}->${nextId}`}>
-                <line
-                  x1={node.x}
-                  y1={node.y}
-                  x2={targetNode.x}
-                  y2={targetNode.y}
-                  stroke="#020617"
-                  strokeWidth="7"
-                  strokeLinecap="round"
-                />
-                <line
-                  x1={node.x}
-                  y1={node.y}
-                  x2={targetNode.x}
-                  y2={targetNode.y}
-                  stroke={isPlayerEdge ? 'url(#activePathGradient)' : 'url(#pathGradient)'}
-                  strokeWidth={isPlayerEdge ? '4' : '2.5'}
-                  strokeLinecap="round"
-                />
-              </g>
-            );
-          })
-        )}
+          return (
+            <line
+              key={`tether-${m.id}`}
+              x1={mNode.x}
+              y1={mNode.y}
+              x2={pNode.x}
+              y2={pNode.y}
+              stroke="#ef4444"
+              strokeWidth="2"
+              strokeDasharray="4 4"
+              className="animate-pulse"
+              opacity="0.8"
+            />
+          );
+        })}
 
         {/* 2. Room Shapes & Nodes */}
         {allNodes.map(node => {
@@ -175,8 +197,12 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
           const isTarget = selectedTargetNodeId === node.id;
           const isApex = node.type === 'APEX';
 
+          // Support multiple players in the same node
           const playersOnNode = players.filter(p => p.currentNodeId === node.id);
-          const isChaserHere = chaserSpawned && chaserNodeId === node.id;
+          
+          // Support multiple Chaser Monoliths in the same node
+          const nodeMonoliths = monoliths.filter(m => m.currentNodeId === node.id);
+          const legacyChaserHere = chaserSpawned && chaserNodeId === node.id;
 
           const isRestSpot = node.roomType === 'RestSpot';
           const size = isApex ? 74 : node.roomType === 'OctagonHub' ? 66 : 58;
@@ -239,14 +265,14 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
                 textAnchor="middle"
                 className="text-[9px] font-mono fill-slate-400 pointer-events-none select-none"
               >
-                {node.type === 'APEX' ? 'APEX' : node.type === 'START' ? 'ORIGIN' : isRestSpot ? `(${node.gridX},${node.gridY})` : `CHAMBER (${node.gridX},${node.gridY})`}
+                {node.type === 'APEX' ? 'APEX' : node.type === 'START' ? 'ORIGIN' : isRestSpot ? `(${node.gridX},${node.gridY})` : `ROOM (${node.gridX},${node.gridY})`}
               </text>
 
-              {/* Players Occupying this Node */}
+              {/* Multiple Players Occupying this Node */}
               {playersOnNode.length > 0 && (
                 <g transform={`translate(${node.x}, ${node.y - (isRestSpot ? dotRadius + 14 : half + 14)})`}>
                   {playersOnNode.map((p, idx) => {
-                    const offset = (idx - (playersOnNode.length - 1) / 2) * 16;
+                    const offset = (idx - (playersOnNode.length - 1) / 2) * 18;
                     const isActive = p.id === activePlayerId;
                     return (
                       <g key={p.id} transform={`translate(${offset}, 0)`}>
@@ -270,8 +296,33 @@ export const BoardGraph: React.FC<BoardGraphProps> = ({
                 </g>
               )}
 
-              {/* Chaser Entity Marker */}
-              {isChaserHere && (
+              {/* Chaser Monoliths on this Node */}
+              {nodeMonoliths.map((m, mIdx) => {
+                const mOffset = (mIdx - (nodeMonoliths.length - 1) / 2) * 20;
+                return (
+                  <g 
+                    key={m.id} 
+                    transform={`translate(${node.x + mOffset}, ${node.y + (isRestSpot ? dotRadius + 12 : half + 12)})`}
+                    filter={m.isAggro ? 'url(#monolithGlowBoard)' : undefined}
+                  >
+                    <polygon
+                      points="-6,0 0,-14 6,0 4,8 -4,8"
+                      fill={m.isAggro ? '#7f1d1d' : '#1e293b'}
+                      stroke={m.isAggro ? '#ef4444' : '#64748b'}
+                      strokeWidth={m.isAggro ? 2 : 1.5}
+                    />
+                    <circle
+                      cy="-5"
+                      r="2.5"
+                      fill={m.isAggro ? '#f87171' : '#94a3b8'}
+                      className={m.isAggro ? 'animate-ping' : ''}
+                    />
+                  </g>
+                );
+              })}
+
+              {/* Legacy fallback if single chaserNodeId passed */}
+              {nodeMonoliths.length === 0 && legacyChaserHere && (
                 <g transform={`translate(${node.x + (isRestSpot ? dotRadius : half - 2)}, ${node.y - (isRestSpot ? dotRadius : half - 2)})`}>
                   <circle r="11" fill="#450a0a" stroke="#ef4444" strokeWidth="2" />
                   <circle r="10" fill="#7f1d1d" stroke="#f87171" strokeWidth="2" />
